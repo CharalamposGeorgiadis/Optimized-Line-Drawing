@@ -85,7 +85,7 @@ void DrawWuLine(Surface* screen, int X0, int Y0, int X1, int Y1, uint clrLine)
 
     /* Draw the initial pixel, which is always exactly intersected by
     the line and so needs no weighting */
-    screen->Plot(X0, Y0, clrLine);
+    screen->pixels[X0 + Y0 * SCRWIDTH] = clrLine;
 
     int DeltaX = X1 - X0;
     int XDir = 1;
@@ -152,7 +152,7 @@ void DrawWuLine(Surface* screen, int X0, int Y0, int X1, int Y1, uint clrLine)
         }
         /* Draw the final pixel, which is always exactly intersected by the line
         and so needs no weighting */
-        screen->Plot(X1, Y1, clrLine);
+        screen->pixels[X1 + Y1 * SCRWIDTH] = clrLine;
         return;
     }
     /* It's an X-major line; calculate 16-bit fixed-point fractional part of a
