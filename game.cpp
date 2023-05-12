@@ -14,8 +14,10 @@ __int64 fitness = 0xfffffffff;								// similarity to reference image
 int lidx = 0;												// current line to be mutated
 float peak = 0;												// peak line rendering performance
 Surface* reference, * backup;								// surfaces
-uint* ref8;													// grayscale image for evaluation
+BYTE* ref8;													// grayscale image for evaluation
 Timer tm;													// stopwatch
+
+BYTE* col8, * back8;
 
 int height_1 = SCRHEIGHT - 1;
 int height_8 = SCRHEIGHT - 8;
@@ -26,10 +28,6 @@ int height_33 = SCRHEIGHT - 33;
 int width_1 = SCRWIDTH - 1;
 int iterations_1000 = ITERATIONS * 1000;
 int dims = SCRWIDTH * SCRHEIGHT;
-int dims_mult = dims * 4;
-int dims_div = dims / 4;
-
-uint *pixels, *backup_pixels;
 
 
 // -----------------------------------------------------------
@@ -76,7 +74,7 @@ void UndoMutation(int i)
 // Straight from: 
 // https://www.codeproject.com/Articles/13360/Antialiasing-Wu-Algorithm
 // -----------------------------------------------------------
-void DrawWuLine(int X0, int Y0, int X1, int Y1, uint clrLine)
+void DrawWuLine(uint8_t* col8, int X0, int Y0, int X1, int Y1, uint8_t clrLine)
 {
     /* Make sure the line runs top to bottom */
     if (Y0 > Y1)
@@ -87,132 +85,124 @@ void DrawWuLine(int X0, int Y0, int X1, int Y1, uint clrLine)
 
     /* Draw the initial pixel, which is always exactly intersected by
     the line and so needs no weighting */
-    pixels[X0 + Y0 * SCRWIDTH] = clrLine;
+    col8[X0 + Y0 * SCRWIDTH] = clrLine;
 
+    /* Special-case horizontal, vertical, and diagonal lines, which
+       require no weighting because they go right through the center of
+       every pixel */
     int DeltaX = X1 - X0;
     int XDir = 1;
 
     if (DeltaX < 0)
     {
         XDir = -1;
-        DeltaX = -DeltaX; /* make DeltaX positive */
+        DeltaX = -DeltaX;
     }
 
-    /* Special-case horizontal, vertical, and diagonal lines, which
-    require no weighting because they go right through the center of
-    every pixel */
     int DeltaY = Y1 - Y0;
 
     unsigned short ErrorAdj;
     unsigned short ErrorAccTemp, Weighting;
-
     /* Line is not horizontal, diagonal, or vertical */
-    unsigned short ErrorAcc = 0;  /* initialize the line error accumulator to 0 */
+    unsigned short ErrorAcc = 0;
 
-    int rl = GetRValue(clrLine);
+    int rl = clrLine;
     int rl_shift = rl << 8;
 
     /* Is this an X-major or Y-major line? */
     if (DeltaY > DeltaX)
     {
         /* Y-major line; calculate 16-bit fixed-point fractional part of a
-        pixel that X advances each time Y advances 1 pixel, truncating the
-            result so that we won't overrun the endpoint along the X axis */
+           pixel that X advances each time Y advances 1 pixel, truncating the
+           result so that we won't overrun the endpoint along the X axis */
         ErrorAdj = (DeltaX << 16) / DeltaY;
         /* Draw all pixels other than the first and last */
-        while (--DeltaY) {
-            ErrorAccTemp = ErrorAcc;   /* remember currrent accumulated error */
-            ErrorAcc += ErrorAdj;      /* calculate error for next pixel */
-            if (ErrorAcc <= ErrorAccTemp) {
+        while (--DeltaY)
+        {
+            ErrorAccTemp = ErrorAcc; /* remember currrent accumulated error */
+            ErrorAcc += ErrorAdj;/* calculate error for next pixel */
+            if (ErrorAcc <= ErrorAccTemp)
+            {
                 /* The error accumulator turned over, so advance the X coord */
                 X0 += XDir;
             }
-            Y0++; /* Y-major, so always advance Y */
+            Y0++;
             /* The IntensityBits most significant bits of ErrorAcc give us the
-            intensity weighting for this pixel, and the complement of the
-            weighting for the paired pixel */
+                intensity weighting for this pixel, and the complement of the
+                weighting for the paired pixel */
+
             Weighting = ErrorAcc >> 8;
             int offset = X0 + Y0 * SCRWIDTH;
             int offset_next = offset + XDir;
 
-            COLORREF clrBackGround = pixels[offset];
-            int rb = GetRValue(clrBackGround);
+            uint8_t clrBackGround = col8[offset];
+            int rr = (Weighting * (clrBackGround - rl) + rl_shift) >> 8;
+            col8[offset] = rr;
 
-            int rr = (Weighting * (rb - rl) + rl_shift) >> 8;
-            pixels[offset] = rr;
-
-            clrBackGround = pixels[offset_next];
-            rb = GetRValue(clrBackGround);
-
-            rr = ((Weighting ^ 255) * (rb - rl) + rl_shift) >> 8;
-            pixels[offset_next] = rr;
+            clrBackGround = col8[offset_next];
+            rr = ((Weighting ^ 255) * (clrBackGround - rl) + rl_shift) >> 8;
+            col8[offset_next] = rr;
         }
-        /* Draw the final pixel, which is always exactly intersected by the line and so needs no weighting */
-        pixels[X1 + Y1 * SCRWIDTH] = clrLine;
+        /* Draw the final pixel, which is always exactly intersected by the line
+        and so needs no weighting */
+        col8[X1 + Y1 * SCRWIDTH] = clrLine;
         return;
     }
     /* It's an X-major line; calculate 16-bit fixed-point fractional part of a
-    pixel that Y advances each time X advances 1 pixel, truncating the
-    result to avoid overrunning the endpoint along the X axis */
+        pixel that Y advances each time X advances 1 pixel, truncating the
+        result to avoid overrunning the endpoint along the X axis */
     ErrorAdj = (DeltaY << 16) / DeltaX;
     /* Draw all pixels other than the first and last */
-    while (--DeltaX) {
-        ErrorAccTemp = ErrorAcc;   /* remember currrent accumulated error */
-        ErrorAcc += ErrorAdj;      /* calculate error for next pixel */
-        if (ErrorAcc <= ErrorAccTemp) {
+    while (--DeltaX)
+    {
+        ErrorAccTemp = ErrorAcc; /* remember currrent accumulated error */
+        ErrorAcc += ErrorAdj; /* calculate error for next pixel */
+        if (ErrorAcc <= ErrorAccTemp)
+        {
             /* The error accumulator turned over, so advance the Y coord */
             Y0++;
         }
-        X0 += XDir; /* X-major, so always advance X */
+        /* X-major, so always advance X */
         /* The IntensityBits most significant bits of ErrorAcc give us the
         intensity weighting for this pixel, and the complement of the
         weighting for the paired pixel */
+        X0 += XDir;
+
         Weighting = ErrorAcc >> 8;
         int offset = X0 + Y0 * SCRWIDTH;
         int offset_next = X0 + (Y0 + 1) * SCRWIDTH;
 
-        COLORREF clrBackGround = pixels[offset];
-        int rb = GetRValue(clrBackGround);
+        uint8_t clrBackGround = col8[offset];
+        int rr = (Weighting * (clrBackGround - rl) + rl_shift) >> 8;
+        col8[offset] = rr;
 
-        int rr = (Weighting * (rb - rl) + rl_shift) >> 8;
-        pixels[offset] = rr;
-
-        clrBackGround = pixels[offset_next];
-        rb = GetRValue(clrBackGround);
-
-        rr = ((Weighting ^ 255) * (rb - rl) + rl_shift) >> 8;
-        pixels[offset_next] = rr;
+        clrBackGround = col8[offset_next];
+        rr = ((Weighting ^ 255) * (clrBackGround - rl) + rl_shift) >> 8;
+        col8[offset_next] = rr;
     }
-
     /* Draw the final pixel, which is always exactly intersected by the line
-    and so needs no weighting */
-    pixels[X1 + Y1 * SCRWIDTH] = clrLine;
+       and so needs no weighting */
+    col8[X1 + Y1 * SCRWIDTH] = clrLine;
 }
 
 // -----------------------------------------------------------
 // Fitness evaluation
 // Compare current generation against reference image.
 // -----------------------------------------------------------
+
+// could not get the simd version to produce correct results using byte arrays, 
+// so here's a non-simd version, the program performs way faster than using 4 byte arrays with simd evaluate
 __int64 Game::Evaluate()
 {
-    // compare to reference using SIMD magic. don't worry about it, it's fast.
-    const int quads = dims_div;
-    __m128i* A4 = (__m128i*)pixels;
-    __m128i* B4 = (__m128i*)ref8;
-    union { __m128i diff4; int diff[4]; };
-    diff4 = _mm_set1_epi32(0);
-    const __m128i mask4 = _mm_set1_epi32(0x000000FF);
-    for (int i = 0; i < quads; i++)
-    {
-        const __m128i d2 = _mm_abs_epi32(_mm_sub_epi32(_mm_and_si128(A4[i], mask4), B4[i]));
-        diff4 = _mm_add_epi32(diff4, _mm_srai_epi32(_mm_mul_epi32(d2, d2), 12));
+    __int64 diff = 0;
+    for (int i = 0; i < dims; i++) {
+        int d = col8[i] - ref8[i];
+        diff += (d * d);
     }
-    __int64 retval = diff[0];
-    retval += diff[1];
-    retval += diff[2];
-    retval += diff[3];
-    return retval;
+
+    return diff >> 12;
 }
+
 
 // -----------------------------------------------------------
 // Application initialization
@@ -233,13 +223,15 @@ void Game::Init()
     }
     Surface* reference = new Surface("assets/image3.png");
     backup = new Surface(SCRWIDTH, SCRHEIGHT);
-    ref8 = (uint*)MALLOC64(dims_mult);
+    ref8 = (BYTE*)MALLOC64(dims);
     for (int i = 0; i < dims; i++)
-        ref8[i] = reference->pixels[i] & 255;
-    fitness = 512 * 512 * 16;
+        ref8[i] = (BYTE)(reference->pixels[i] & 255);
 
-    pixels = (uint*)MALLOC64(dims_mult);
-    backup_pixels = (uint*)MALLOC64(dims_mult);
+    col8 = (BYTE*)MALLOC64(dims);
+    back8 = (BYTE*)MALLOC64(dims);
+
+
+    fitness = 512 * 512 * 16;
 }
 
 // -----------------------------------------------------------
@@ -264,26 +256,28 @@ void Game::Tick(float _DT)
     tm.reset();
     int lineCount = 0;
     // draw up to lidx
-    memset(screen->pixels, 255, dims_mult);
-    // initialize the array with white pixels
-    memset(pixels, 255, dims_mult);
+    memset(col8, 255, dims);
     for (int j = 0; j < lidx; j++, lineCount++)
     {
         unsigned int c = (j << 7) >> LINES_SHIFT;
-        DrawWuLine(lx1[j], ly1[j], lx2[j], ly2[j], c + (c << 8) + (c << 16));
+        DrawWuLine(col8, lx1[j], ly1[j], lx2[j], ly2[j], c & 255);
     }
     int base = lidx;
-    memcpy(backup_pixels, pixels, dims_mult);
+
+    memcpy(back8, col8, dims);
+
     // iterate and draw from lidx to end
     for (int k = 0; k < ITERATIONS; k++)
     {
-        memcpy(pixels, backup_pixels, dims_mult);
+        memcpy(col8, back8, dims);
+
         MutateLine(lidx);
         for (int j = base; j < LINES; j++, lineCount++)
         {
             unsigned int c = (j << 7) >> LINES_SHIFT;
-            DrawWuLine(lx1[j], ly1[j], lx2[j], ly2[j], c + (c << 8) + (c << 16));
+            DrawWuLine(col8, lx1[j], ly1[j], lx2[j], ly2[j], (c));
         }
+
         __int64 diff = Evaluate();
         if (diff < fitness)
             fitness = diff;
@@ -293,8 +287,8 @@ void Game::Tick(float _DT)
     }
 
     for (int pos = 0; pos < dims; pos++) {
-        uint pixel = pixels[pos];
-        screen->pixels[pos] = RGB(pixel, pixel, pixel);
+        uint8_t col = col8[pos];
+        screen->pixels[pos] = RGB(col, col, col);
     }
 
     // stats
